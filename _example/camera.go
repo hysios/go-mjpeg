@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"flag"
-	"image/color"
 	"log"
 	"net/http"
 	"os"
@@ -14,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mattn/go-mjpeg"
+	"github.com/hysios/go-mjpeg"
 
 	"gocv.io/x/gocv"
 )
@@ -23,10 +22,10 @@ var (
 	camera   = flag.String("camera", "0", "Camera ID")
 	addr     = flag.String("addr", ":8080", "Server address")
 	xml      = flag.String("classifier", "haarcascade_frontalface_default.xml", "classifier XML file")
-	interval = flag.Duration("interval", 200*time.Millisecond, "interval")
+	interval = flag.Duration("interval", 10*time.Millisecond, "interval")
 )
 
-func capture(ctx context.Context, wg *sync.WaitGroup, stream *mjpeg.Stream) {
+func capture(ctx context.Context, wg *sync.WaitGroup, stream *mjpeg.Stream, wsstream *mjpeg.WSStream) {
 	defer wg.Done()
 
 	var webcam *gocv.VideoCapture
@@ -42,38 +41,38 @@ func capture(ctx context.Context, wg *sync.WaitGroup, stream *mjpeg.Stream) {
 	}
 	defer webcam.Close()
 
-	classifier := gocv.NewCascadeClassifier()
-	defer classifier.Close()
-	if !classifier.Load(*xml) {
-		log.Println("unable to load:", *xml)
-		return
-	}
-
 	im := gocv.NewMat()
 
 	for len(ctx.Done()) == 0 {
-		var buf []byte
-		if stream.NWatch() > 0 {
+		var (
+			buf     []byte
+			sn, wsn bool
+		)
+
+		sn, wsn = stream.NWatch() > 0, wsstream.NWatch() > 0
+		if sn || wsn {
 			if ok := webcam.Read(&im); !ok {
 				continue
 			}
 
-			rects := classifier.DetectMultiScale(im)
-			for _, r := range rects {
-				face := im.Region(r)
-				face.Close()
-				gocv.Rectangle(&im, r, color.RGBA{0, 0, 255, 0}, 2)
-			}
 			buf, err = gocv.IMEncode(".jpg", im)
 			if err != nil {
 				continue
 			}
 		}
-		err = stream.Update(buf)
-		if err != nil {
-			break
+		if sn {
+			err = stream.Update(buf)
+			if err != nil {
+				break
+			}
 		}
-		time.Sleep(100 * time.Millisecond)
+		if wsn {
+			err = wsstream.Update(buf)
+			if err != nil {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -81,18 +80,21 @@ func main() {
 	flag.Parse()
 
 	stream := mjpeg.NewStreamWithInterval(*interval)
+	wsstream := mjpeg.NewWSStreamWithInterval(*interval)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go capture(ctx, &wg, stream)
+	go capture(ctx, &wg, stream, wsstream)
 
 	http.HandleFunc("/mjpeg", stream.ServeHTTP)
+	http.HandleFunc("/stream", wsstream.ServeHTTP)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<img src="/mjpeg" />`))
-	})
+	// http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// 	w.Header().Set("Content-Type", "text/html")
+	// 	w.Write([]byte(`<img src="/mjpeg" />`))
+	// })
+	http.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir("_example"))))
 
 	server := &http.Server{Addr: *addr}
 	sc := make(chan os.Signal, 1)

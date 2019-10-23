@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mattn/go-mjpeg"
+	"github.com/hysios/go-mjpeg"
 )
 
 var (

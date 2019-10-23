@@ -1,0 +1,59 @@
+<html>
+
+<head>
+    <title>mjpeg-relay example</title>
+</head>
+
+<body>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <script>
+        //--CONFIGURATION--
+        function arrayBufferToBase64(buffer, callback) {
+            var blob = new Blob([buffer]);
+            var reader = new FileReader();
+            reader.onload = function (evt) {
+                var dataurl = evt.target.result;
+                callback(dataurl);
+                // callback(dataurl.substr(dataurl.indexOf(',') + 1));
+            };
+            reader.readAsDataURL(blob);
+        }
+
+        var websocketAddress = "ws://192.168.1.191:8080/stream";
+
+        //--END OF CONFIGURATION--
+
+        var c = document.getElementById("canvas");
+        var ctx = c.getContext("2d");
+
+        var websocket = new WebSocket(websocketAddress);
+        websocket.binaryType = 'arraybuffer';
+
+        websocket.onopen = function () {
+            console.log("mjpeg-relay connected");
+        };
+
+        websocket.onclose = function () {
+            console.log("mjpeg-relay disconnected");
+        };
+
+        websocket.onmessage = function (evt) {
+            var image = new Image();
+            image.onload = function () {
+                ctx.drawImage(image, 0, 0);
+            };
+
+            arrayBufferToBase64(evt.data, function (base64) {
+                image.src = base64;
+            })
+        };
+
+        websocket.onerror = function (evt) {
+            console.log('error: ' + evt.data);
+            websocket.close();
+        };
+    </script>
+</body>
+
+</html>
